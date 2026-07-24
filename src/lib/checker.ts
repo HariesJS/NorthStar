@@ -127,15 +127,18 @@ async function applyResult(
         ? 'уже было в сторе на момент добавления — точная дата выхода неизвестна'
         : null,
     );
-    // Telegram шлём только на НАСТОЯЩИЙ релиз: не на приложения, уже бывшие в
-    // сторе при добавлении (firstEverCheck), и не на возврат из removed
-    // (wasRemoved). Ошибка отправки не должна ломать обход — проглатываем.
-    if (!firstEverCheck && !wasRemoved) {
+    // Telegram шлём и на настоящий релиз, и на приложения, уже опубликованные
+    // на момент добавления (firstEverCheck) — по желанию пользователя. НЕ шлём
+    // только на возврат из removed (restored). Ошибка отправки не должна ломать
+    // обход — проглатываем. firstEverCheck меняет формулировку: у таких
+    // приложений это не «вышло», а «уже в сторе».
+    if (!wasRemoved) {
       await notifyPublished({
         package_id: app.package_id,
         title: result.title ?? app.title,
         developer: result.developer ?? app.developer,
         country: app.country,
+        alreadyInStore: firstEverCheck,
       }).catch(() => {});
     }
     return 'published';

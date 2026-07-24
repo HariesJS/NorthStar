@@ -103,12 +103,14 @@ interface PublishedApp {
   title: string | null;
   developer: string | null;
   country: string;
+  /** true — приложение уже было в сторе на момент добавления (не свежий релиз). */
+  alreadyInStore?: boolean;
 }
 
 /**
- * Разослать всем активным подписчикам сообщение о выходе приложения.
- * Каждая отправка изолирована; на 403/400 (бота заблокировали / чат удалён)
- * подписчик деактивируется. Никогда не бросает наружу.
+ * Разослать всем активным подписчикам сообщение о том, что приложение
+ * доступно в Google Play. Каждая отправка изолирована; на 403/400 (бота
+ * заблокировали / чат удалён) подписчик деактивируется. Никогда не бросает.
  */
 export async function notifyPublished(app: PublishedApp): Promise<void> {
   if (!API) return;
@@ -118,7 +120,12 @@ export async function notifyPublished(app: PublishedApp): Promise<void> {
 
     const name = escapeHtml(app.title ?? app.package_id);
     const url = playStoreUrl(app.package_id, app.country);
-    const lines = [`🎉 <b>${name}</b> вышло в Google Play`];
+    // «Вышло» — про свежий релиз; для добавленного уже-опубликованного это
+    // было бы неверно, поэтому формулировка мягче.
+    const heading = app.alreadyInStore
+      ? `📲 <b>${name}</b> уже в Google Play`
+      : `🎉 <b>${name}</b> вышло в Google Play`;
+    const lines = [heading];
     if (app.developer) lines.push(escapeHtml(app.developer));
     lines.push('', `<a href="${url}">Открыть в Google Play</a>`);
     const text = lines.join('\n');
