@@ -91,7 +91,7 @@ export function Dashboard({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-50">NorthStar</h1>
           <p className="text-sm text-slate-400">
-            Отслеживание релизов в Google Play · проверка каждые 15 минут
+            Отслеживание релизов в Google Play · проверка каждые 5 минут
           </p>
         </div>
         <div className="flex items-center gap-3">
