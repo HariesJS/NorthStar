@@ -1,0 +1,158 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { AppCard } from './AppCard';
+import { AppModal } from './AppModal';
+import { BulkAddForm } from './BulkAddForm';
+import { formatRelative } from '@/lib/format';
+import type { AppStatus, TrackedApp } from '@/lib/types';
+
+type Filter = 'all' | 'published' | 'waiting' | 'removed';
+
+const FILTERS: { key: Filter; label: string; match: (s: AppStatus) => boolean }[] = [
+  { key: 'all', label: 'Все', match: () => true },
+  { key: 'published', label: 'Вышедшие', match: (s) => s === 'published' },
+  {
+    key: 'waiting',
+    label: 'Ждём',
+    match: (s) => s === 'not_published' || s === 'pre_registration' || s === 'unknown',
+  },
+  { key: 'removed', label: 'Удалённые', match: (s) => s === 'removed' },
+];
+
+const POLL_MS = 60_000;
+
+export function Dashboard({
+  initialApps,
+  initialLastCheck,
+}: {
+  initialApps: TrackedApp[];
+  initialLastCheck: string | null;
+}) {
+  const [apps, setApps] = useState(initialApps);
+  const [lastCheck, setLastCheck] = useState(initialLastCheck);
+  const [filter, setFilter] = useState<Filter>('all');
+  const [openPkg, setOpenPkg] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const res = await fetch('/api/apps', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      apps: TrackedApp[];
+      lastFullCheckAt: string | null;
+    };
+    setApps(data.apps);
+    setLastCheck(data.lastFullCheckAt);
+  }, []);
+
+  // Открытая вкладка сама подтягивает изменения — релиз видно без перезагрузки
+  useEffect(() => {
+    const id = setInterval(refresh, POLL_MS);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  async function checkNow() {
+    if (checking) return;
+    setChecking(true);
+    try {
+      const res = await fetch('/api/check', { method: 'POST' });
+      if (res.ok) {
+        const data = (await res.json()) as { apps: TrackedApp[] };
+        setApps(data.apps);
+        setLastCheck(new Date().toISOString());
+      }
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function markSeen(pkg: string) {
+    setApps((prev) =>
+      prev.map((a) => (a.package_id === pkg ? { ...a, seen_new: 1 } : a)),
+    );
+    await fetch(`/api/apps/${encodeURIComponent(pkg)}`, { method: 'PATCH' });
+  }
+
+  const visible = apps.filter((a) => FILTERS.find((f) => f.key === filter)!.match(a.status));
+  const newCount = apps.filter((a) => a.status === 'published' && a.seen_new === 0).length;
+
+  return (
+    <main className="mx-auto max-w-6xl px-4 py-8">
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-50">NorthStar</h1>
+          <p className="text-sm text-slate-400">
+            Отслеживание релизов в Google Play · проверка каждые 15 минут
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">
+            проверка: {formatRelative(lastCheck)}
+          </span>
+          <button
+            onClick={checkNow}
+            disabled={checking}
+            className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 transition hover:border-white/35 hover:bg-white/5 disabled:opacity-40"
+          >
+            {checking ? 'Проверяю…' : 'Проверить сейчас'}
+          </button>
+        </div>
+      </header>
+
+      {newCount > 0 && (
+        <div className="mb-5 rounded-xl border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-green-200">
+          Вышло приложений: <b>{newCount}</b> — отмечены зелёным вверху списка.
+        </div>
+      )}
+
+      <BulkAddForm onAdded={refresh} />
+
+      <nav className="mt-6 mb-4 flex flex-wrap gap-2">
+        {FILTERS.map((f) => {
+          const count = apps.filter((a) => f.match(a.status)).length;
+          return (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className={`rounded-lg px-3 py-1.5 text-sm transition ${
+                filter === f.key
+                  ? 'bg-white/10 text-slate-100'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+              }`}
+            >
+              {f.label} <span className="text-slate-600">{count}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {visible.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-white/10 py-12 text-center text-sm text-slate-500">
+          {apps.length === 0
+            ? 'Пока пусто — вставьте ссылки на приложения выше.'
+            : 'В этом фильтре ничего нет.'}
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {visible.map((app) => (
+            <AppCard
+              key={app.package_id}
+              app={app}
+              onOpen={() => setOpenPkg(app.package_id)}
+              onMarkSeen={() => markSeen(app.package_id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {openPkg && (
+        <AppModal
+          packageId={openPkg}
+          onClose={() => setOpenPkg(null)}
+          onChanged={refresh}
+        />
+      )}
+    </main>
+  );
+}

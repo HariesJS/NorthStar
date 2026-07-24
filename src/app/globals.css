@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: #0b0f14;
+  color: #e6edf3;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Мягкая пульсация вокруг только что вышедшего приложения */
+@keyframes northstar-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgb(34 197 94 / 0.7), 0 0 22px -4px rgb(34 197 94 / 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgb(34 197 94 / 0.9), 0 0 34px 2px rgb(34 197 94 / 0.75);
+  }
+}
+
+.northstar-new {
+  animation: northstar-glow 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .northstar-new {
+    animation: none;
+    box-shadow: 0 0 0 1px rgb(34 197 94 / 0.9), 0 0 24px -4px rgb(34 197 94 / 0.6);
+  }
+}
