@@ -82,7 +82,7 @@ async function handleUpdate(update: TgUpdate, request: Request) {
     // web_app-кнопка (открывает Mini App) допустима только в личных чатах.
     const button =
       siteUrl && chat.type === 'private'
-        ? { text: '📱 Открыть NorthStar', url: siteUrl, kind: 'web_app' as const }
+        ? { text: '📱 Открыть North Star', url: siteUrl, kind: 'web_app' as const }
         : undefined;
     await sendMessage(
       String(chat.id),

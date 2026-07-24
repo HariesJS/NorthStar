@@ -4,7 +4,7 @@ import { TelegramInit } from '@/components/TelegramInit';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'NorthStar — трекер релизов в Google Play',
+  title: 'North Star — трекер релизов в Google Play',
   description: 'Отслеживание выхода приложений в Google Play',
 };
 
