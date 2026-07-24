@@ -34,6 +34,14 @@ export function Dashboard({
   const [filter, setFilter] = useState<Filter>('all');
   const [openPkg, setOpenPkg] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  // Сам по себе lastCheck меняется редко (раз в минуту, при опросе) — этот
+  // тикер ничего не запрашивает, а просто заставляет перерисовать текст
+  // «проверка: N сек назад», чтобы он не застывал на «только что».
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceTick((t) => t + 1), 5_000);
+    return () => clearInterval(id);
+  }, []);
 
   const refresh = useCallback(async () => {
     const res = await fetch('/api/apps', { cache: 'no-store' });
