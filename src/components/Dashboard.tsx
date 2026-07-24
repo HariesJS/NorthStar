@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppCard } from './AppCard';
 import { AppModal } from './AppModal';
 import { BulkAddForm } from './BulkAddForm';
@@ -21,11 +21,13 @@ const FILTERS: { key: Filter; label: string; match: (s: AppStatus) => boolean }[
 ];
 
 // Обычный ритм опроса, пока ничего не происходит.
-const IDLE_POLL_MS = 20_000;
+const IDLE_POLL_MS = 10_000;
 // Пока сервер сообщает, что обход идёт (в том числе запущенный извне, крон-
-// сервисом), опрашиваем чаще — чтобы поймать и начало, и момент завершения,
-// а не только конечный результат раз в 20 секунд.
+// сервисом), опрашиваем чаще — чтобы поймать момент его завершения.
 const ACTIVE_POLL_MS = 3_000;
+// Сколько показывать «Проверяю…», когда мы узнали о проверке постфактум
+// (не застали checking=true вживую, а просто заметили, что время сменилось).
+const JUST_FINISHED_FLASH_MS = 1_500;
 
 export function Dashboard({
   initialApps,
@@ -42,10 +44,16 @@ export function Dashboard({
   const [openPkg, setOpenPkg] = useState<string | null>(null);
   // Клик по кнопке — мгновенная местная реакция, не дожидаясь опроса.
   const [manualChecking, setManualChecking] = useState(false);
-  // Идёт ли обход, сообщает сам сервер — это ловит и запуски извне (крон),
-  // о которых браузер иначе узнал бы только постфактум.
+  // Идёт ли обход, сообщает сам сервер. Ловит запуски извне (крон), но
+  // ненадёжно: на 10 приложениях обход занимает ~3 сек, а опрос идёт раз
+  // в 10 — велик шанс ни разу не попасть в это окно вживую.
   const [serverChecking, setServerChecking] = useState(initialChecking);
-  const isChecking = manualChecking || serverChecking;
+  // Поэтому есть и надёжный, не зависящий от удачного тайминга сигнал:
+  // если при опросе видим, что lastFullCheckAt сменился с прошлого раза —
+  // проверка точно только что прошла, даже если мы её не «застали».
+  const [justFinished, setJustFinished] = useState(false);
+  const lastSeenCheckRef = useRef(initialLastCheck);
+  const isChecking = manualChecking || serverChecking || justFinished;
 
   // Сам по себе lastCheck меняется редко — этот тикер ничего не запрашивает,
   // а просто заставляет перерисовать текст «проверка: N сек назад», чтобы он
@@ -65,8 +73,17 @@ export function Dashboard({
       checking: boolean;
     };
     setApps(data.apps);
-    setLastCheck(data.lastFullCheckAt);
     setServerChecking(data.checking);
+
+    if (data.lastFullCheckAt && data.lastFullCheckAt !== lastSeenCheckRef.current) {
+      lastSeenCheckRef.current = data.lastFullCheckAt;
+      setLastCheck(data.lastFullCheckAt);
+      // Время сменилось — проверка прошла, независимо от того, увидели мы
+      // checking=true вживую или нет. Коротко показываем «Проверяю…», чтобы
+      // обновление было заметно, а не просто тихо поменяло цифры в фоне.
+      setJustFinished(true);
+      setTimeout(() => setJustFinished(false), JUST_FINISHED_FLASH_MS);
+    }
   }, []);
 
   // Открытая вкладка сама подтягивает изменения — релиз видно без
@@ -83,9 +100,16 @@ export function Dashboard({
     try {
       const res = await fetch('/api/check', { method: 'POST' });
       if (res.ok) {
-        const data = (await res.json()) as { apps: TrackedApp[] };
+        const data = (await res.json()) as {
+          apps: TrackedApp[];
+          summary: { finishedAt: string };
+        };
         setApps(data.apps);
-        setLastCheck(new Date().toISOString());
+        // Точное время с сервера, а не клиентское приближение — и сразу
+        // синхронизируем ref, чтобы следующий опрос не решил, что время
+        // «снова сменилось», и не мигнул лишний раз.
+        lastSeenCheckRef.current = data.summary.finishedAt;
+        setLastCheck(data.summary.finishedAt);
         setServerChecking(false);
       }
     } finally {
