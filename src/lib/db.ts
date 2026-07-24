@@ -69,6 +69,16 @@ async function migrate(client: PoolClient) {
       key   TEXT PRIMARY KEY,
       value TEXT
     );
+
+    -- Получатели Telegram-уведомлений: личные чаты (нажали /start) и группы
+    -- (бота туда добавили). chat_id у групп отрицательный, поэтому TEXT.
+    CREATE TABLE IF NOT EXISTS subscribers (
+      chat_id     TEXT PRIMARY KEY,
+      type        TEXT NOT NULL,      -- private | group | supergroup | channel
+      title       TEXT,               -- @username или название группы, для ориентира
+      active      INTEGER NOT NULL DEFAULT 1,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
 

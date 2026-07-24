@@ -52,6 +52,9 @@ Google Play не отдаёт настоящую дату первого рел�
 | `src/lib/db.ts` | пул соединений Postgres и миграция схемы |
 | `src/app/api/check/route.ts` | полный обход; сюда стучится внешний cron |
 | `src/components/Dashboard.tsx` | список, фильтры, автообновление раз в минуту |
+| `src/lib/telegram.ts` | отправка сообщений и подписчики Telegram |
+| `src/app/api/telegram/webhook/route.ts` | приём `/start` и добавления в группы |
+| `src/components/TelegramInit.tsx` | инициализация Mini App внутри Telegram |
 
 ## Деплой на Vercel
 
@@ -82,6 +85,43 @@ Vercel Hobby ограничен одним запуском в сутки. По�
 > мягче часто предлагаемой минуты (3000 запросов в час) и почти не увеличивает
 > риск временной блокировки со стороны Google по сравнению с 15 минутами.
 
+## Telegram-бот и Mini App
+
+Бот присылает сообщение (название + ссылка на Google Play) в момент, когда
+отслеживаемое приложение **впервые выходит** в стор. Уведомление получает любой,
+кто нажал `/start`, и любая группа, куда бота добавили. Сообщение НЕ приходит на
+приложения, уже опубликованные на момент добавления, и на возврат ранее удалённых
+— только на настоящий релиз. Через кнопку меню бота сайт открывается как Mini App.
+
+Отправка происходит прямо во время планового обхода `/api/check`; отдельный
+процесс не нужен. Если `TELEGRAM_BOT_TOKEN` не задан — бот просто выключен, всё
+остальное работает как обычно.
+
+### Настройка (делается один раз)
+
+1. **Создать бота.** В Telegram открыть [@BotFather](https://t.me/BotFather) →
+   команда `/newbot` → задать имя и username (должен заканчиваться на `bot`).
+   BotFather выдаст **токен** вида `123456:ABC-DEF...`.
+2. **Прописать переменные** в Vercel → Settings → Environment Variables:
+   - `TELEGRAM_BOT_TOKEN` — токен из шага 1.
+   - `TELEGRAM_WEBHOOK_SECRET` — любая длинная случайная строка (придумать самим).
+
+   Затем **Redeploy** (переменные подхватывают только новые деплои).
+3. **Зарегистрировать webhook** — один запрос в браузере, подставив свои значения:
+   ```
+   https://api.telegram.org/bot<ТОКЕН>/setWebhook?url=https://<домен>.vercel.app/api/telegram/webhook&secret_token=<СЕКРЕТ>
+   ```
+   Ответ `{"ok":true,"result":true,...}` — webhook принят.
+4. **Кнопка Mini App.** В @BotFather → `/mybots` → выбрать бота → **Bot Settings →
+   Menu Button → Configure menu button** → указать URL сайта
+   `https://<домен>.vercel.app`. Теперь у бота есть кнопка, открывающая сайт.
+5. **Проверить.** Написать боту `/start` — придёт приветствие. Добавить бота в
+   группу — он начнёт слать релизы и туда.
+
+> Проверить, что webhook жив:
+> `https://api.telegram.org/bot<ТОКЕН>/getWebhookInfo` — должен показать ваш URL,
+> `pending_update_count: 0` и без `last_error_message`.
+
 ## Переменные окружения
 
 | Переменная | Где | Назначение |
@@ -89,6 +129,8 @@ Vercel Hobby ограничен одним запуском в сутки. По�
 | `POSTGRES_URL` | Vercel (авто) | строка подключения к Postgres |
 | `DATABASE_URL` | локально | то же для локального Postgres |
 | `NORTHSTAR_CHECK_TOKEN` | Vercel (опц.) | защищает `/api/check`; если пусто — проверка открыта всем |
+| `TELEGRAM_BOT_TOKEN` | Vercel (опц.) | токен бота из BotFather; если пусто — бот выключен |
+| `TELEGRAM_WEBHOOK_SECRET` | Vercel (опц.) | проверяется на входящем webhook Telegram |
 
 ## Переезд на обычный сервер (VPS / Railway / Fly)
 

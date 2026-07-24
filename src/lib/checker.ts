@@ -1,5 +1,6 @@
 import { query, nowIso, setMeta, getMeta } from './db';
 import { checkPackage, type CheckResult } from './playstore';
+import { notifyPublished } from './telegram';
 import type { AppStatus, EventType, TrackedApp } from './types';
 
 const CONCURRENCY = 6;
@@ -126,6 +127,17 @@ async function applyResult(
         ? 'уже было в сторе на момент добавления — точная дата выхода неизвестна'
         : null,
     );
+    // Telegram шлём только на НАСТОЯЩИЙ релиз: не на приложения, уже бывшие в
+    // сторе при добавлении (firstEverCheck), и не на возврат из removed
+    // (wasRemoved). Ошибка отправки не должна ломать обход — проглатываем.
+    if (!firstEverCheck && !wasRemoved) {
+      await notifyPublished({
+        package_id: app.package_id,
+        title: result.title ?? app.title,
+        developer: result.developer ?? app.developer,
+        country: app.country,
+      }).catch(() => {});
+    }
     return 'published';
   }
   if (to === 'pre_registration' && from !== 'pre_registration') {
