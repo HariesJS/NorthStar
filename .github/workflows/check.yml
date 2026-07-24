@@ -1,0 +1,21 @@
+name: Проверка релизов
+
+# Каждые 15 минут дёргаем /api/check на задеплоенном сайте.
+# Vercel Hobby не даёт cron чаще раза в сутки, поэтому расписание держим здесь.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {} # можно запустить вручную из вкладки Actions
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Вызвать проверку
+        run: |
+          code=$(curl -sS -o /tmp/out.txt -w '%{http_code}' \
+            -H "x-northstar-token: ${{ secrets.NORTHSTAR_CHECK_TOKEN }}" \
+            "${{ secrets.NORTHSTAR_CHECK_URL }}")
+          echo "HTTP $code"
+          cat /tmp/out.txt
+          test "$code" = "200"

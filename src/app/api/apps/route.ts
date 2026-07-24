@@ -5,12 +5,14 @@ import { parseLinks } from '@/lib/parse-links';
 import { runCheck } from '@/lib/checker';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 export async function GET() {
-  return NextResponse.json({
-    apps: listApps(),
-    lastFullCheckAt: getMeta('last_full_check_at'),
-  });
+  const [apps, lastFullCheckAt] = await Promise.all([
+    listApps(),
+    getMeta('last_full_check_at'),
+  ]);
+  return NextResponse.json({ apps, lastFullCheckAt });
 }
 
 export async function POST(request: Request) {
@@ -25,12 +27,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const { added, duplicates } = addApps(packageIds);
+  const { added, duplicates } = await addApps(packageIds);
 
   // Новые проверяем сразу, чтобы не ждать следующего тика планировщика
   if (added.length > 0) {
     await runCheck(added);
   }
 
-  return NextResponse.json({ added, duplicates, unrecognized, apps: listApps() });
+  return NextResponse.json({
+    added,
+    duplicates,
+    unrecognized,
+    apps: await listApps(),
+  });
 }

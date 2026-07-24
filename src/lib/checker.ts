@@ -1,4 +1,4 @@
-import { db, nowIso, setMeta } from './db';
+import { query, nowIso, setMeta } from './db';
 import { checkPackage, type CheckResult } from './playstore';
 import type { AppStatus, EventType, TrackedApp } from './types';
 
@@ -13,17 +13,18 @@ export interface CheckSummary {
   finishedAt: string;
 }
 
-function logEvent(
+async function logEvent(
   packageId: string,
   type: EventType,
   from: AppStatus | null,
   to: AppStatus | null,
   detail: string | null = null,
 ) {
-  db.prepare(
+  await query(
     `INSERT INTO events (package_id, type, from_status, to_status, detail, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(packageId, type, from, to, detail, nowIso());
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [packageId, type, from, to, detail, nowIso()],
+  );
 }
 
 /**
@@ -32,15 +33,19 @@ function logEvent(
  * Главное правило: результат `error` НИКОГДА не меняет статус. Иначе один
  * сетевой таймаут превратил бы вышедшее приложение обратно в «не опубликовано».
  */
-function applyResult(app: TrackedApp, result: CheckResult): 'published' | 'removed' | 'error' | null {
+async function applyResult(
+  app: TrackedApp,
+  result: CheckResult,
+): Promise<'published' | 'removed' | 'error' | null> {
   const now = nowIso();
   const from = app.status;
 
   if (result.kind === 'error') {
-    db.prepare(
-      'UPDATE apps SET last_checked_at = ?, last_error = ? WHERE package_id = ?',
-    ).run(now, result.message, app.package_id);
-    logEvent(app.package_id, 'error', from, from, result.message);
+    await query(
+      'UPDATE apps SET last_checked_at = $1, last_error = $2 WHERE package_id = $3',
+      [now, result.message, app.package_id],
+    );
+    await logEvent(app.package_id, 'error', from, from, result.message);
     return 'error';
   }
 
@@ -52,17 +57,18 @@ function applyResult(app: TrackedApp, result: CheckResult): 'published' | 'remov
     // иначе факт бана терялся бы на первой же повторной проверке.
     const to: AppStatus = wasVisible || from === 'removed' ? 'removed' : 'not_published';
 
-    db.prepare(
+    await query(
       `UPDATE apps
-         SET status = ?, last_checked_at = ?, last_error = NULL,
+         SET status = $1, last_checked_at = $2, last_error = NULL,
              removed_at = CASE
-               WHEN ? = 'removed' AND removed_at IS NULL THEN ?
+               WHEN $1 = 'removed' AND removed_at IS NULL THEN $2::timestamptz
                ELSE removed_at END
-       WHERE package_id = ?`,
-    ).run(to, now, to, now, app.package_id);
+       WHERE package_id = $3`,
+      [to, now, app.package_id],
+    );
 
     if (wasVisible) {
-      logEvent(app.package_id, 'removed', from, to);
+      await logEvent(app.package_id, 'removed', from, to);
       return 'removed';
     }
     // unknown -> not_published: это не событие, а просто первая проверка
@@ -78,39 +84,40 @@ function applyResult(app: TrackedApp, result: CheckResult): 'published' | 'remov
   // Play её не показывает, только «Updated on» — дату последнего обновления).
   const firstEverCheck = from === 'unknown';
 
-  db.prepare(
+  await query(
     `UPDATE apps
-        SET status = @status,
-            title = COALESCE(@title, title),
-            developer = COALESCE(@developer, developer),
-            icon_url = COALESCE(@iconUrl, icon_url),
-            store_updated_on = COALESCE(@storeUpdatedOn, store_updated_on),
+        SET status = $1,
+            title = COALESCE($2, title),
+            developer = COALESCE($3, developer),
+            icon_url = COALESCE($4, icon_url),
+            store_updated_on = COALESCE($5, store_updated_on),
             published_at = CASE
-              WHEN @status = 'published' AND published_at IS NULL AND @firstEverCheck = 0
-                THEN @now
+              WHEN $1 = 'published' AND published_at IS NULL AND $6 = 0
+                THEN $7::timestamptz
               ELSE published_at END,
             published_before_tracking = CASE
-              WHEN @status = 'published' AND @firstEverCheck = 1 THEN 1
+              WHEN $1 = 'published' AND $6 = 1 THEN 1
               ELSE published_before_tracking END,
-            removed_at = CASE WHEN @status = 'published' THEN NULL ELSE removed_at END,
-            seen_new = CASE WHEN @becamePublished = 1 THEN 0 ELSE seen_new END,
-            last_checked_at = @now,
+            removed_at = CASE WHEN $1 = 'published' THEN NULL ELSE removed_at END,
+            seen_new = CASE WHEN $8 = 1 THEN 0 ELSE seen_new END,
+            last_checked_at = $7::timestamptz,
             last_error = NULL
-      WHERE package_id = @packageId`,
-  ).run({
-    status: to,
-    title: result.title,
-    developer: result.developer,
-    iconUrl: result.iconUrl,
-    storeUpdatedOn: result.storeUpdatedOn,
-    firstEverCheck: firstEverCheck ? 1 : 0,
-    becamePublished: becamePublished ? 1 : 0,
-    now,
-    packageId: app.package_id,
-  });
+      WHERE package_id = $9`,
+    [
+      to,
+      result.title,
+      result.developer,
+      result.iconUrl,
+      result.storeUpdatedOn,
+      firstEverCheck ? 1 : 0,
+      now,
+      becamePublished ? 1 : 0,
+      app.package_id,
+    ],
+  );
 
   if (becamePublished) {
-    logEvent(
+    await logEvent(
       app.package_id,
       wasRemoved ? 'restored' : 'published',
       from,
@@ -122,7 +129,7 @@ function applyResult(app: TrackedApp, result: CheckResult): 'published' | 'remov
     return 'published';
   }
   if (to === 'pre_registration' && from !== 'pre_registration') {
-    logEvent(app.package_id, 'pre_registration', from, to);
+    await logEvent(app.package_id, 'pre_registration', from, to);
     return null;
   }
   // Уже было published — интересна только смена даты обновления в сторе
@@ -132,7 +139,7 @@ function applyResult(app: TrackedApp, result: CheckResult): 'published' | 'remov
     app.store_updated_on &&
     result.storeUpdatedOn !== app.store_updated_on
   ) {
-    logEvent(
+    await logEvent(
       app.package_id,
       'updated',
       from,
@@ -161,12 +168,11 @@ function sleep(ms: number) {
  */
 export async function runCheck(packageIds?: string[]): Promise<CheckSummary> {
   const apps = packageIds?.length
-    ? (db
-        .prepare(
-          `SELECT * FROM apps WHERE package_id IN (${packageIds.map(() => '?').join(',')})`,
-        )
-        .all(...packageIds) as TrackedApp[])
-    : (db.prepare('SELECT * FROM apps').all() as TrackedApp[]);
+    ? await query<TrackedApp>(
+        `SELECT * FROM apps WHERE package_id = ANY($1)`,
+        [packageIds],
+      )
+    : await query<TrackedApp>('SELECT * FROM apps');
 
   const summary: CheckSummary = {
     checked: 0,
@@ -183,7 +189,7 @@ export async function runCheck(packageIds?: string[]): Promise<CheckSummary> {
       // джиттер, чтобы 50 запросов не уходили ровным залпом
       await sleep(300 + Math.floor(Math.random() * 500));
       const result = await checkOne(app);
-      const outcome = applyResult(app, result);
+      const outcome = await applyResult(app, result);
       summary.checked += 1;
       if (outcome === 'published') summary.published += 1;
       if (outcome === 'removed') summary.removed += 1;
@@ -198,7 +204,7 @@ export async function runCheck(packageIds?: string[]): Promise<CheckSummary> {
   summary.finishedAt = nowIso();
   // Полный обход отмечаем как «последняя проверка», выборочный — нет:
   // иначе добавление одного приложения сбрасывало бы таймер на UI.
-  if (!packageIds?.length) setMeta('last_full_check_at', summary.finishedAt);
+  if (!packageIds?.length) await setMeta('last_full_check_at', summary.finishedAt);
   return summary;
 }
 
