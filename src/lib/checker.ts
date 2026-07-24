@@ -1,4 +1,4 @@
-import { query, nowIso, setMeta } from './db';
+import { query, nowIso, setMeta, getMeta } from './db';
 import { checkPackage, type CheckResult } from './playstore';
 import type { AppStatus, EventType, TrackedApp } from './types';
 
@@ -167,6 +167,12 @@ function sleep(ms: number) {
  * (используется при добавлении новых, чтобы не ждать следующего тика).
  */
 export async function runCheck(packageIds?: string[]): Promise<CheckSummary> {
+  const isFullCheck = !packageIds?.length;
+  // Отмечаем начало ДО обхода и в базе, а не в памяти процесса — крон и клик
+  // пользователя почти всегда попадают в разные serverless-инстансы Vercel,
+  // у каждого своя память. Только запись в БД видна отовсюду одинаково.
+  if (isFullCheck) await setMeta('check_started_at', nowIso());
+
   const apps = packageIds?.length
     ? await query<TrackedApp>(
         `SELECT * FROM apps WHERE package_id = ANY($1)`,
@@ -204,8 +210,33 @@ export async function runCheck(packageIds?: string[]): Promise<CheckSummary> {
   summary.finishedAt = nowIso();
   // Полный обход отмечаем как «последняя проверка», выборочный — нет:
   // иначе добавление одного приложения сбрасывало бы таймер на UI.
-  if (!packageIds?.length) await setMeta('last_full_check_at', summary.finishedAt);
+  if (isFullCheck) await setMeta('last_full_check_at', summary.finishedAt);
   return summary;
+}
+
+// Функция обычно укладывается в 10–20 сек; maxDuration в /api/check — 60 сек.
+// Запас сверху на случай, если инстанс умер посреди обхода и не успел
+// дописать last_full_check_at — тогда «идёт проверка» не повиснет навечно.
+const STALE_CHECK_MS = 90_000;
+
+/**
+ * Идёт ли сейчас полный обход. Источник — таблица meta, а не память процесса:
+ * крон и открытая вкладка браузера почти всегда попадают в разные
+ * serverless-инстансы Vercel, и только запись в БД видна обоим одинаково.
+ */
+export async function isCheckInProgress(): Promise<boolean> {
+  const [startedRaw, finishedRaw] = await Promise.all([
+    getMeta('check_started_at'),
+    getMeta('last_full_check_at'),
+  ]);
+  if (!startedRaw) return false;
+
+  const started = new Date(startedRaw).getTime();
+  if (Number.isNaN(started)) return false;
+  if (Date.now() - started > STALE_CHECK_MS) return false;
+
+  const finished = finishedRaw ? new Date(finishedRaw).getTime() : NaN;
+  return Number.isNaN(finished) || finished < started;
 }
 
 const globalForRun = globalThis as unknown as {

@@ -2,17 +2,18 @@ import { NextResponse } from 'next/server';
 import { getMeta } from '@/lib/db';
 import { addApps, listApps } from '@/lib/repo';
 import { parseLinks } from '@/lib/parse-links';
-import { runCheck } from '@/lib/checker';
+import { isCheckInProgress, runCheck } from '@/lib/checker';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET() {
-  const [apps, lastFullCheckAt] = await Promise.all([
+  const [apps, lastFullCheckAt, checking] = await Promise.all([
     listApps(),
     getMeta('last_full_check_at'),
+    isCheckInProgress(),
   ]);
-  return NextResponse.json({ apps, lastFullCheckAt });
+  return NextResponse.json({ apps, lastFullCheckAt, checking });
 }
 
 export async function POST(request: Request) {

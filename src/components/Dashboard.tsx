@@ -20,23 +20,36 @@ const FILTERS: { key: Filter; label: string; match: (s: AppStatus) => boolean }[
   { key: 'removed', label: 'Удалённые', match: (s) => s === 'removed' },
 ];
 
-const POLL_MS = 60_000;
+// Обычный ритм опроса, пока ничего не происходит.
+const IDLE_POLL_MS = 20_000;
+// Пока сервер сообщает, что обход идёт (в том числе запущенный извне, крон-
+// сервисом), опрашиваем чаще — чтобы поймать и начало, и момент завершения,
+// а не только конечный результат раз в 20 секунд.
+const ACTIVE_POLL_MS = 3_000;
 
 export function Dashboard({
   initialApps,
   initialLastCheck,
+  initialChecking = false,
 }: {
   initialApps: TrackedApp[];
   initialLastCheck: string | null;
+  initialChecking?: boolean;
 }) {
   const [apps, setApps] = useState(initialApps);
   const [lastCheck, setLastCheck] = useState(initialLastCheck);
   const [filter, setFilter] = useState<Filter>('all');
   const [openPkg, setOpenPkg] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
-  // Сам по себе lastCheck меняется редко (раз в минуту, при опросе) — этот
-  // тикер ничего не запрашивает, а просто заставляет перерисовать текст
-  // «проверка: N сек назад», чтобы он не застывал на «только что».
+  // Клик по кнопке — мгновенная местная реакция, не дожидаясь опроса.
+  const [manualChecking, setManualChecking] = useState(false);
+  // Идёт ли обход, сообщает сам сервер — это ловит и запуски извне (крон),
+  // о которых браузер иначе узнал бы только постфактум.
+  const [serverChecking, setServerChecking] = useState(initialChecking);
+  const isChecking = manualChecking || serverChecking;
+
+  // Сам по себе lastCheck меняется редко — этот тикер ничего не запрашивает,
+  // а просто заставляет перерисовать текст «проверка: N сек назад», чтобы он
+  // не застывал на «только что».
   const [, forceTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => forceTick((t) => t + 1), 5_000);
@@ -49,29 +62,34 @@ export function Dashboard({
     const data = (await res.json()) as {
       apps: TrackedApp[];
       lastFullCheckAt: string | null;
+      checking: boolean;
     };
     setApps(data.apps);
     setLastCheck(data.lastFullCheckAt);
+    setServerChecking(data.checking);
   }, []);
 
-  // Открытая вкладка сама подтягивает изменения — релиз видно без перезагрузки
+  // Открытая вкладка сама подтягивает изменения — релиз видно без
+  // перезагрузки. Пока сервер сообщает об активном обходе, опрос учащается,
+  // чтобы не пропустить момент его завершения.
   useEffect(() => {
-    const id = setInterval(refresh, POLL_MS);
+    const id = setInterval(refresh, serverChecking ? ACTIVE_POLL_MS : IDLE_POLL_MS);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, serverChecking]);
 
   async function checkNow() {
-    if (checking) return;
-    setChecking(true);
+    if (isChecking) return;
+    setManualChecking(true);
     try {
       const res = await fetch('/api/check', { method: 'POST' });
       if (res.ok) {
         const data = (await res.json()) as { apps: TrackedApp[] };
         setApps(data.apps);
         setLastCheck(new Date().toISOString());
+        setServerChecking(false);
       }
     } finally {
-      setChecking(false);
+      setManualChecking(false);
     }
   }
 
@@ -96,14 +114,14 @@ export function Dashboard({
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-500">
-            проверка: {formatRelative(lastCheck)}
+            {isChecking ? 'идёт проверка…' : `проверка: ${formatRelative(lastCheck)}`}
           </span>
           <button
             onClick={checkNow}
-            disabled={checking}
+            disabled={isChecking}
             className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 transition hover:border-white/35 hover:bg-white/5 disabled:opacity-40"
           >
-            {checking ? 'Проверяю…' : 'Проверить сейчас'}
+            {isChecking ? 'Проверяю…' : 'Проверить сейчас'}
           </button>
         </div>
       </header>
