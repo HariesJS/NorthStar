@@ -50,8 +50,7 @@ Google Play не отдаёт настоящую дату первого рел�
 | `src/lib/checker.ts` | правила переходов статусов, запись событий |
 | `src/lib/repo.ts` | чтение/запись приложений, сортировка списка |
 | `src/lib/db.ts` | пул соединений Postgres и миграция схемы |
-| `src/app/api/check/route.ts` | полный обход; сюда стучится cron |
-| `.github/workflows/check.yml` | GitHub Actions: вызывает `/api/check` каждые 15 минут |
+| `src/app/api/check/route.ts` | полный обход; сюда стучится внешний cron |
 | `src/components/Dashboard.tsx` | список, фильтры, автообновление раз в минуту |
 
 ## Деплой на Vercel
@@ -59,19 +58,24 @@ Google Play не отдаёт настоящую дату первого рел�
 1. **Импортировать репозиторий** в Vercel (New Project → выбрать `NorthStar`).
 2. **Создать базу**: вкладка Storage → Create Database → Postgres. Vercel сам
    пропишет `POSTGRES_URL` в переменные окружения проекта.
-3. **Задать секрет** `NORTHSTAR_CHECK_TOKEN` (любая длинная случайная строка) в
-   Settings → Environment Variables. Он защищает `/api/check` от посторонних.
-4. **Задеплоить.** Сайт откроется на `*.vercel.app`, схема БД создастся сама.
-5. **Настроить cron** в GitHub (Settings → Secrets and variables → Actions):
-   - `NORTHSTAR_CHECK_URL` = `https://<ваш-домен>.vercel.app/api/check`
-   - `NORTHSTAR_CHECK_TOKEN` = то же значение, что в Vercel
+3. **Задеплоить.** Сайт откроется на `*.vercel.app`, схема БД создастся сама.
+4. **Настроить cron** (проверка каждые 15 минут) — см. ниже.
 
-   Workflow `.github/workflows/check.yml` уже в репозитории — он будет вызывать
-   проверку каждые 15 минут. Запустить вручную для теста: вкладка Actions →
-   «Проверка релизов» → Run workflow.
+## Проверка по расписанию
 
-> Vercel Hobby разрешает собственный cron не чаще раза в сутки, поэтому
-> расписание держим в GitHub Actions — там ограничений на частоту нет.
+Serverless-функции Vercel не держат фоновых таймеров, а собственный cron на
+Vercel Hobby ограничен одним запуском в сутки. Поэтому `/api/check` дёргает
+внешний сервис — например бесплатный [cron-job.org](https://cron-job.org):
+
+1. Зарегистрироваться, Create cronjob.
+2. URL: `https://<ваш-домен>.vercel.app/api/check`
+3. Интервал: каждые 15 минут.
+4. (Опционально, для защиты) задать `NORTHSTAR_CHECK_TOKEN` в Environment
+   Variables на Vercel и передавать его заголовком `x-northstar-token` в
+   настройках cronjob. Без токена эндпоинт открыт всем.
+
+> GitHub Actions для этого не годится: его `*/15` cron часто задерживается или
+> пропускается. Внешний пингер запускает точно в срок.
 
 ## Переменные окружения
 
@@ -79,8 +83,7 @@ Google Play не отдаёт настоящую дату первого рел�
 |---|---|---|
 | `POSTGRES_URL` | Vercel (авто) | строка подключения к Postgres |
 | `DATABASE_URL` | локально | то же для локального Postgres |
-| `NORTHSTAR_CHECK_TOKEN` | Vercel + GitHub | защищает `/api/check`; если пусто — проверка открыта всем |
-| `NORTHSTAR_CHECK_URL` | GitHub | адрес `/api/check` на задеплоенном сайте |
+| `NORTHSTAR_CHECK_TOKEN` | Vercel (опц.) | защищает `/api/check`; если пусто — проверка открыта всем |
 
 ## Переезд на обычный сервер (VPS / Railway / Fly)
 
